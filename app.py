@@ -5,27 +5,46 @@ import requests
 import uuid
 import traceback
 import base64
-from threading import Lock
+import queue
+import threading
+import time
 
 app = Flask(__name__, static_folder='generated_images', static_url_path='/generated_images')
+CORS(app)  # Enable CORS for all domains by default
 
-# Enable CORS for all routes
-CORS(app)
-
-# Lock to allow only one request at a time
-generation_lock = Lock()
-
+# Load Gemini API key from environment variable
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it before running the application.")
+    raise ValueError("GOOGLE_API_KEY environment variable not set.")
 
 MODEL_NAME = "gemini-2.0-flash-exp-image-generation"
-API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+API_ENDPOINT = f"{API_BASE_URL}/{MODEL_NAME}:generateContent"
 
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
+# Thread-safe request queue
+request_queue = queue.Queue()
+results_dict = {}
+results_lock = threading.Lock()
+
+# Background worker that processes image generation jobs one by one
+def worker():
+    while True:
+        job_id, prompt = request_queue.get()
+        try:
+            images = generate_image_with_gemini(prompt)
+            with results_lock:
+                results_dict[job_id] = {"status": "done", "images": images}
+        except Exception as e:
+            with results_lock:
+                results_dict[job_id] = {"status": "error", "message": str(e)}
+        request_queue.task_done()
+
+# Start the background worker thread
+threading.Thread(target=worker, daemon=True).start()
 
 def generate_image_with_gemini(prompt, num_images=4):
     filenames = []
@@ -34,7 +53,7 @@ def generate_image_with_gemini(prompt, num_images=4):
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
-                    "responseModalities": ["Text", "Image"],
+                    "responseModalities": ["Text", "Image"]
                 }
             }
             params = {"key": GOOGLE_API_KEY}
@@ -43,7 +62,7 @@ def generate_image_with_gemini(prompt, num_images=4):
             response_json = response.json()
 
             if "error" in response_json:
-                print(f"Gemini API Error: {response_json['error'].get('message', 'Unknown error')}")
+                print("Gemini API Error:", response_json["error"])
                 continue
 
             parts = response_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
@@ -57,57 +76,52 @@ def generate_image_with_gemini(prompt, num_images=4):
                     filenames.append(filename)
                     break
         except Exception as e:
-            print(f"Error: {traceback.format_exc()}")
+            print(f"Error generating image: {e}")
+            print(traceback.format_exc())
     return filenames
-
 
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
-    try:
-        data = request.get_json()
-        business_name = data.get("businessname", "").strip()
-        slogan = data.get("slogan", "").strip()
-        industry = data.get("industry", "").strip()
+    data = request.get_json()
+    business_name = data.get("businessname", "").strip()
+    slogan = data.get("slogan", "").strip()
+    industry = data.get("industry", "").strip()
 
-        if not business_name or not industry:
-            return jsonify({"error": "Business name and industry are required."}), 400
+    if not business_name or not industry:
+        return jsonify({"error": "Business name and industry are required"}), 400
 
-        prompt = (
-            f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
-            f"Use matured and professional colors. Make sure it's tempting and attractive to the eyes. "
-            f"Play with the brand name and the icon. White background. In {industry} logo style. "
-            f"Leverage 60, 30, 10 color principle. Ensure the logo icon concept is clear and meaningful. "
-            f"Remember, white background."
-        )
-        if slogan:
-            prompt += f" My business slogan is {slogan}."
+    prompt = (
+        f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
+        "Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. "
+        "Play with the brand name and the icon. White background. In {industry} industry logo style. "
+        "Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. "
+        "Remember on a white background."
+    )
+    if slogan:
+        prompt += f" My business slogan is {slogan}."
 
-        with generation_lock:
-            image_filenames = generate_image_with_gemini(prompt)
+    job_id = uuid.uuid4().hex
+    request_queue.put((job_id, prompt))
 
-        if not image_filenames:
-            return jsonify({"error": "Image generation failed. Try again."}), 500
-
-        image_urls = [f"/generated_images/{filename}" for filename in image_filenames]
-        return jsonify({"images": image_urls}), 200
-
-    except Exception as e:
-        print(f"Unhandled error: {traceback.format_exc()}")
-        return jsonify({"error": "Internal server error."}), 500
-
+    # Wait for the result from the queue
+    while True:
+        with results_lock:
+            if job_id in results_dict:
+                result = results_dict.pop(job_id)
+                return jsonify(result)
+        time.sleep(0.5)
 
 @app.route('/generated_images/<filename>')
 def serve_image(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
-
 @app.route("/")
 def home():
-    return jsonify({"message": "Brandice AI Logo Generator API is online!"})
-
+    return jsonify({"status": "running", "message": "Brandice AI backend is live!"})
 
 if __name__ == "__main__":
     app.run(debug=True)
+
 
 
 
