@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
 import os
 import requests
 import uuid
@@ -8,24 +9,22 @@ from threading import Lock
 
 app = Flask(__name__, static_folder='generated_images', static_url_path='/generated_images')
 
-# Set up a lock to ensure one request at a time
+# Enable CORS for all routes
+CORS(app)
+
+# Lock to allow only one request at a time
 generation_lock = Lock()
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-    raise ValueError(
-        "GOOGLE_API_KEY environment variable not set. "
-        "Please set it before running the application."
-    )
+    raise ValueError("GOOGLE_API_KEY environment variable not set. Please set it before running the application.")
 
 MODEL_NAME = "gemini-2.0-flash-exp-image-generation"
-API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
-API_ENDPOINT = f"{API_BASE_URL}/{MODEL_NAME}:generateContent"
+API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
 
 OUTPUT_FOLDER = "generated_images"
-if not os.path.exists(OUTPUT_FOLDER):
-    os.makedirs(OUTPUT_FOLDER)
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
 def generate_image_with_gemini(prompt, num_images=4):
@@ -39,32 +38,24 @@ def generate_image_with_gemini(prompt, num_images=4):
                 }
             }
             params = {"key": GOOGLE_API_KEY}
-
             response = requests.post(API_ENDPOINT, json=payload, params=params)
             response.raise_for_status()
             response_json = response.json()
 
             if "error" in response_json:
-                error_message = response_json["error"].get("message", "Unknown error from Gemini API")
-                print(f"Gemini API Error: {error_message}")
+                print(f"Gemini API Error: {response_json['error'].get('message', 'Unknown error')}")
                 continue
 
-            if (
-                "candidates" in response_json
-                and response_json["candidates"]
-                and "content" in response_json["candidates"][0]
-                and "parts" in response_json["candidates"][0]["content"]
-            ):
-                parts = response_json["candidates"][0]["content"]["parts"]
-                for part in parts:
-                    if "inlineData" in part and "data" in part["inlineData"]:
-                        image_data = part["inlineData"]["data"]
-                        filename = f"image_{uuid.uuid4().hex}.png"
-                        filepath = os.path.join(OUTPUT_FOLDER, filename)
-                        with open(filepath, "wb") as f:
-                            f.write(base64.b64decode(image_data))
-                        filenames.append(filename)
-                        break
+            parts = response_json.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            for part in parts:
+                if "inlineData" in part and "data" in part["inlineData"]:
+                    image_data = part["inlineData"]["data"]
+                    filename = f"image_{uuid.uuid4().hex}.png"
+                    filepath = os.path.join(OUTPUT_FOLDER, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(base64.b64decode(image_data))
+                    filenames.append(filename)
+                    break
         except Exception as e:
             print(f"Error: {traceback.format_exc()}")
     return filenames
@@ -72,48 +63,37 @@ def generate_image_with_gemini(prompt, num_images=4):
 
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
-    """
-    API endpoint to receive data and return generated image filenames.
-    """
     try:
         data = request.get_json()
-        business_name = data.get("businessname", "")
-        slogan = data.get("slogan", "")
-        industry = data.get("industry", "")
+        business_name = data.get("businessname", "").strip()
+        slogan = data.get("slogan", "").strip()
+        industry = data.get("industry", "").strip()
 
         if not business_name or not industry:
             return jsonify({"error": "Business name and industry are required."}), 400
 
-        if slogan.strip() == "":
-            main_prompt = (
-                f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
-                f"Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. "
-                f"Play with the brand name and the icon. White background. In {industry} industry logo style. "
-                f"Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. "
-                f"Remember on a white background."
-            )
-        else:
-            main_prompt = (
-                f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
-                f"Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. "
-                f"Play with the brand name and the icon. White background. In {industry} industry logo style. "
-                f"Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. "
-                f"My business slogan is {slogan}. Remember on a white background."
-            )
+        prompt = (
+            f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
+            f"Use matured and professional colors. Make sure it's tempting and attractive to the eyes. "
+            f"Play with the brand name and the icon. White background. In {industry} logo style. "
+            f"Leverage 60, 30, 10 color principle. Ensure the logo icon concept is clear and meaningful. "
+            f"Remember, white background."
+        )
+        if slogan:
+            prompt += f" My business slogan is {slogan}."
 
-        # Ensure one request at a time
         with generation_lock:
-            filenames = generate_image_with_gemini(main_prompt)
+            image_filenames = generate_image_with_gemini(prompt)
 
-        if not filenames:
+        if not image_filenames:
             return jsonify({"error": "Image generation failed. Try again."}), 500
 
-        image_urls = [f"/generated_images/{filename}" for filename in filenames]
+        image_urls = [f"/generated_images/{filename}" for filename in image_filenames]
         return jsonify({"images": image_urls}), 200
 
     except Exception as e:
-        print(f"Unexpected error: {traceback.format_exc()}")
-        return jsonify({"error": "An unexpected error occurred."}), 500
+        print(f"Unhandled error: {traceback.format_exc()}")
+        return jsonify({"error": "Internal server error."}), 500
 
 
 @app.route('/generated_images/<filename>')
@@ -123,7 +103,7 @@ def serve_image(filename):
 
 @app.route("/")
 def home():
-    return jsonify({"message": "Welcome to Brandice AI Logo Generator API"})
+    return jsonify({"message": "Brandice AI Logo Generator API is online!"})
 
 
 if __name__ == "__main__":
