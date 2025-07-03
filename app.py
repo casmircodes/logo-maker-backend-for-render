@@ -1,16 +1,16 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
+
 import os
 import requests
 import uuid
 import base64
 import traceback
-import threading
-import queue
-from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
+from threading import Thread
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Allow requests from frontend (Netlify)
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
@@ -22,24 +22,9 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Task queue
-task_queue = queue.Queue()
-executor = ThreadPoolExecutor(max_workers=3)  # Limit parallel processing to 3 threads
-
-# --- Background worker to process tasks ---
-def worker():
-    while True:
-        func, args, kwargs, result_queue = task_queue.get()
-        try:
-            result = func(*args, **kwargs)
-            result_queue.put(result)
-        except Exception as e:
-            result_queue.put(e)
-        finally:
-            task_queue.task_done()
-
-threading.Thread(target=worker, daemon=True).start()
-
+# Create request queue
+request_queue = Queue()
+result_store = {}
 
 def generate_images(prompt, num_images=4):
     image_urls = []
@@ -69,6 +54,19 @@ def generate_images(prompt, num_images=4):
             continue
     return image_urls
 
+# Worker function that runs in a background thread
+def worker():
+    while True:
+        job_id, prompt = request_queue.get()
+        try:
+            image_urls = generate_images(prompt)
+            result_store[job_id] = image_urls
+        except Exception as e:
+            result_store[job_id] = f"ERROR: {str(e)}"
+        request_queue.task_done()
+
+# Start the worker thread
+Thread(target=worker, daemon=True).start()
 
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
@@ -81,42 +79,39 @@ def generate_logo():
         if not business_name or not industry:
             return jsonify({"error": "Business name and Industry are required."}), 400
 
-        prompt = (
-            f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
-            f"Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. "
-            f"Play with the brand name and the icon. White background. In {industry} industry logo style. "
-            f"Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. "
-            f"Remember on a white background."
-        )
+        # Prompt creation
+        prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
         if slogan.strip():
-            prompt += f" My business slogan is {slogan}."
+            prompt += f" My business slogan is {slogan}"
 
-        result_queue = queue.Queue()
-        task_queue.put((generate_images, (prompt,), {"num_images": 4}, result_queue))
+        # Generate a unique job ID
+        job_id = str(uuid.uuid4())
 
-        result = result_queue.get(timeout=360)  # wait max 2 mins
+        # Queue the request
+        request_queue.put((job_id, prompt))
 
-        if isinstance(result, Exception):
-            return jsonify({"error": f"Image generation failed: {str(result)}"}), 500
+        # Wait until result is ready
+        while job_id not in result_store:
+            pass
 
-        image_urls = result
-        if not image_urls:
-            return jsonify({"error": "Failed to generate images."}), 500
+        result = result_store.pop(job_id)
 
-        full_urls = [request.host_url.rstrip("/") + url for url in image_urls]
+        if isinstance(result, str) and result.startswith("ERROR"):
+            return jsonify({"error": result}), 500
+
+        full_urls = [request.host_url.rstrip("/") + url for url in result]
         return jsonify({"images": full_urls})
 
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-
 @app.route("/generated_images/<filename>")
 def serve_image(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
-
 if __name__ == "__main__":
-    app.run(debug=True, threaded=True)  # Use threaded=True for Flask to handle multiple users
+    app.run(debug=True)
+
 
 
 '''
