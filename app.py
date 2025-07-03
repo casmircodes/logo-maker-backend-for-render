@@ -5,12 +5,13 @@ import requests
 import uuid
 import base64
 import traceback
-from queue import Queue
-from threading import Thread, Lock
-import time
+import threading  # ✅ for request locking
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from frontend (Netlify)
+CORS(app)
+
+# ✅ Lock to prevent concurrent generation
+generation_lock = threading.Lock()
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
@@ -21,10 +22,6 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-
-# Create a queue and a lock
-request_queue = Queue()
-processing_lock = Lock()
 
 def generate_images(prompt, num_images=4):
     image_urls = []
@@ -48,6 +45,7 @@ def generate_images(prompt, num_images=4):
                     image_data = part["inlineData"]["data"]
                     filename = f"image_{uuid.uuid4().hex}.png"
                     filepath = os.path.join(OUTPUT_FOLDER, filename)
+
                     with open(filepath, "wb") as f:
                         f.write(base64.b64decode(image_data))
 
@@ -60,44 +58,31 @@ def generate_images(prompt, num_images=4):
 
     return image_urls
 
-def process_request(data):
-    business_name = data.get("businessname")
-    slogan = data.get("slogan", "")
-    industry = data.get("industry")
-
-    if not business_name or not industry:
-        return {"error": "Business name and Industry are required."}, 400
-
-    prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
-
-    if slogan.strip():
-        prompt += f" My business slogan is {slogan}"
-
-    image_urls = generate_images(prompt)
-
-    if not image_urls:
-        return {"error": "Failed to generate images."}, 500
-
-    full_urls = [request.host_url.rstrip("/") + url for url in image_urls]
-    return {"images": full_urls}, 200
-
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
     try:
-        data = request.get_json()
-        result_container = {}
+        # ✅ Ensure only one request runs generate_images at a time
+        with generation_lock:
+            data = request.get_json()
+            business_name = data.get("businessname")
+            slogan = data.get("slogan", "")
+            industry = data.get("industry")
 
-        def worker():
-            with processing_lock:  # Ensure one request is processed at a time
-                response, status = process_request(data)
-                result_container['response'] = jsonify(response)
-                result_container['status'] = status
+            if not business_name or not industry:
+                return jsonify({"error": "Business name and Industry are required."}), 400
 
-        t = Thread(target=worker)
-        t.start()
-        t.join()  # Wait until processing is done
+            prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
 
-        return result_container['response'], result_container['status']
+            if slogan.strip():
+                prompt += f" My business slogan is {slogan}"
+
+            image_urls = generate_images(prompt)
+
+            if not image_urls:
+                return jsonify({"error": "Failed to generate images."}), 500
+
+            full_urls = [request.host_url.rstrip("/") + url for url in image_urls]
+            return jsonify({"images": full_urls})
 
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
@@ -107,7 +92,11 @@ def serve_image(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True)  # ❌ not for production, use Gunicorn instead
+
+
+
+
 
 
 
