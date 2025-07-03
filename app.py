@@ -49,7 +49,7 @@ def generate_images(prompt, num_images=4):
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"responseModalities": ["Text", "Image"]}
             }
-            response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY}, timeout=30)
+            response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY})
             response.raise_for_status()
             data = response.json()
 
@@ -94,7 +94,7 @@ def generate_logo():
         result_queue = queue.Queue()
         task_queue.put((generate_images, (prompt,), {"num_images": 4}, result_queue))
 
-        result = result_queue.get(timeout=120)  # wait max 2 mins
+        result = result_queue.get(timeout=360)  # wait max 2 mins
 
         if isinstance(result, Exception):
             return jsonify({"error": f"Image generation failed: {str(result)}"}), 500
