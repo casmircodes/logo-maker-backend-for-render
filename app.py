@@ -8,9 +8,10 @@ import base64
 import traceback
 from queue import Queue
 from threading import Thread
+import time
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from frontend (Netlify)
+CORS(app)
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
@@ -22,19 +23,34 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Create request queue
+# Job queue and result store
 request_queue = Queue()
 result_store = {}
 
+# Time tracker for last API call
+last_call_time = 0
+
 def generate_images(prompt, num_images=4):
+    global last_call_time
+
     image_urls = []
+
     for _ in range(num_images):
         try:
+            # Enforce at least 5 seconds between requests
+            now = time.time()
+            wait_time = 5 - (now - last_call_time)
+            if wait_time > 0:
+                time.sleep(wait_time)
+
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"responseModalities": ["Text", "Image"]}
             }
+
             response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY})
+            last_call_time = time.time()
+
             response.raise_for_status()
             data = response.json()
 
@@ -52,9 +68,9 @@ def generate_images(prompt, num_images=4):
         except Exception as e:
             print(f"Image generation error: {e}\n{traceback.format_exc()}")
             continue
+
     return image_urls
 
-# Worker function that runs in a background thread
 def worker():
     while True:
         job_id, prompt = request_queue.get()
@@ -65,7 +81,7 @@ def worker():
             result_store[job_id] = f"ERROR: {str(e)}"
         request_queue.task_done()
 
-# Start the worker thread
+# Start one background worker thread
 Thread(target=worker, daemon=True).start()
 
 @app.route("/generate-logo", methods=["POST"])
@@ -79,20 +95,19 @@ def generate_logo():
         if not business_name or not industry:
             return jsonify({"error": "Business name and Industry are required."}), 400
 
-        # Prompt creation
+        # Create prompt
         prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
+
         if slogan.strip():
             prompt += f" My business slogan is {slogan}"
 
-        # Generate a unique job ID
+        # Generate a job ID
         job_id = str(uuid.uuid4())
-
-        # Queue the request
         request_queue.put((job_id, prompt))
 
-        # Wait until result is ready
+        # Wait for result
         while job_id not in result_store:
-            pass
+            time.sleep(0.1)
 
         result = result_store.pop(job_id)
 
@@ -111,6 +126,7 @@ def serve_image(filename):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
 
 
 
