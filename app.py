@@ -21,7 +21,7 @@ OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 
-def generate_images(prompt, num_images=4):
+def generate_images(prompt, num_images=1):
     image_urls = []
 
     for _ in range(num_images):
