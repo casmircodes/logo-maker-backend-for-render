@@ -6,13 +6,11 @@ import requests
 import uuid
 import base64
 import traceback
-import threading  # ✅ for request locking
+import time
+import threading
 
 app = Flask(__name__)
 CORS(app)
-
-# ✅ Lock to prevent concurrent generation
-generation_lock = threading.Lock()
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
@@ -23,6 +21,12 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Lock and last request time for queuing
+request_lock = threading.Lock()
+last_request_time = 0
+MIN_DELAY_SECONDS = 30
+
 
 def generate_images(prompt, num_images=4):
     image_urls = []
@@ -46,7 +50,6 @@ def generate_images(prompt, num_images=4):
                     image_data = part["inlineData"]["data"]
                     filename = f"image_{uuid.uuid4().hex}.png"
                     filepath = os.path.join(OUTPUT_FOLDER, filename)
-
                     with open(filepath, "wb") as f:
                         f.write(base64.b64decode(image_data))
 
@@ -59,11 +62,23 @@ def generate_images(prompt, num_images=4):
 
     return image_urls
 
+
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
-    try:
-        # ✅ Ensure only one request runs generate_images at a time
-        with generation_lock:
+    global last_request_time
+
+    with request_lock:
+        now = time.time()
+        time_since_last = now - last_request_time
+
+        if time_since_last < MIN_DELAY_SECONDS:
+            wait_time = MIN_DELAY_SECONDS - time_since_last
+            print(f"Waiting {wait_time:.1f} seconds to respect delay rule...")
+            time.sleep(wait_time)
+
+        last_request_time = time.time()
+
+        try:
             data = request.get_json()
             business_name = data.get("businessname")
             slogan = data.get("slogan", "")
@@ -85,15 +100,17 @@ def generate_logo():
             full_urls = [request.host_url.rstrip("/") + url for url in image_urls]
             return jsonify({"images": full_urls})
 
-    except Exception as e:
-        return jsonify({"error": f"Server error: {str(e)}"}), 500
+        except Exception as e:
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+
 
 @app.route("/generated_images/<filename>")
 def serve_image(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
+
 if __name__ == "__main__":
-    app.run(debug=True)  # ❌ not for production, use Gunicorn instead
+    app.run(debug=True)
 
 
 
