@@ -1,11 +1,11 @@
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-import requests
 import os
-import replicate
+import requests
 import uuid
 import base64
 import traceback
+import replicate
 
 app = Flask(__name__)
 CORS(app)  # Allow requests from frontend (Netlify)
@@ -16,40 +16,35 @@ if not REPLICATE_API_TOKEN:
 
 replicate_client = replicate.Client(api_token=REPLICATE_API_TOKEN)
 
-MODEL_VERSION = "stability-ai/stable-diffusion:ac732df83cea7fff18b8472768c88ad041fa750ff7682a21affe81863cbe77e4"
+# Imagen 3 model by Google on Replicate
+MODEL_VERSION = "google/imagen-3:bfd74cd507ad383f2b9e1dc5243a9a4a5f23c47dbcf69d556e4f3b5847e3f763"
 
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-
 def generate_images(prompt, num_images=1):
     image_urls = []
 
-    for _ in range(num_images):
-        try:
+    try:
+        for _ in range(num_images):
             output = replicate_client.run(
                 MODEL_VERSION,
-                input={
-                    "prompt": prompt,
-                    "num_outputs": 1,
-                    "width": 512,
-                    "height": 512,
-                    "guidance_scale": 7.5,
-                }
+                input={"prompt": prompt}
             )
+            if not output:
+                continue
 
-            image_url = output[0]
+            image_url = output[0]  # It's a list of image URLs
             image_data = requests.get(image_url).content
-
             filename = f"image_{uuid.uuid4().hex}.png"
             filepath = os.path.join(OUTPUT_FOLDER, filename)
             with open(filepath, "wb") as f:
                 f.write(image_data)
 
             image_urls.append(f"/generated_images/{filename}")
-        except Exception as e:
-            print(f"Image generation error: {e}\n{traceback.format_exc()}")
-            continue
+
+    except Exception as e:
+        print(f"Image generation error: {e}\n{traceback.format_exc()}")
 
     return image_urls
 
@@ -65,7 +60,9 @@ def generate_logo():
         if not business_name or not industry:
             return jsonify({"error": "Business name and Industry are required."}), 400
 
+        # Dynamic prompt creation
         prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
+
         if slogan.strip():
             prompt += f" My business slogan is {slogan}"
 
@@ -88,6 +85,7 @@ def serve_image(filename):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
 
 
 
