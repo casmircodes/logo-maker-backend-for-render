@@ -5,8 +5,9 @@ import requests
 import uuid
 import base64
 import traceback
-import queue
 import threading
+import queue
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -17,25 +18,15 @@ if not GOOGLE_API_KEY:
 
 MODEL_NAME = "gemini-2.0-flash-exp-image-generation"
 API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
-
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Queue for incoming requests
+# Queue to hold requests
 request_queue = queue.Queue()
-results = {}
-
-# Lock to generate a unique request ID safely
-id_lock = threading.Lock()
-
-# Generate a safe unique ID
-def generate_request_id():
-    with id_lock:
-        return uuid.uuid4().hex
+results = {}  # request_id -> result
 
 def generate_images(prompt, num_images=4):
     image_urls = []
-
     for _ in range(num_images):
         try:
             payload = {
@@ -64,59 +55,57 @@ def generate_images(prompt, num_images=4):
         except Exception as e:
             print(f"Image generation error: {e}\n{traceback.format_exc()}")
             continue
-
     return image_urls
 
-def process_queue():
+# Worker thread to process one request at a time
+def worker():
     while True:
-        req_id, data = request_queue.get()
+        request_id, request_data = request_queue.get()
         try:
-            business_name = data.get("businessname")
-            slogan = data.get("slogan", "")
-            industry = data.get("industry")
+            business_name = request_data.get("businessname")
+            slogan = request_data.get("slogan", "")
+            industry = request_data.get("industry")
 
             if not business_name or not industry:
-                results[req_id] = {"error": "Business name and Industry are required."}
+                results[request_id] = {"error": "Business name and Industry are required."}
                 continue
 
             prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
-
             if slogan.strip():
                 prompt += f" My business slogan is {slogan}"
 
             image_urls = generate_images(prompt)
 
             if not image_urls:
-                results[req_id] = {"error": "Failed to generate images."}
-            else:
-                results[req_id] = {"images": image_urls}
-        except Exception as e:
-            results[req_id] = {"error": f"Server error: {str(e)}"}
-        finally:
-            request_queue.task_done()
+                results[request_id] = {"error": "Failed to generate images."}
+                continue
 
-# Start the background worker
-threading.Thread(target=process_queue, daemon=True).start()
+            results[request_id] = {
+                "images": [f"{request.host_url.rstrip('/')}{url}" for url in image_urls]
+            }
+        except Exception as e:
+            results[request_id] = {"error": f"Server error: {str(e)}"}
+
+# Start background worker thread
+threading.Thread(target=worker, daemon=True).start()
 
 @app.route("/waiting-generate-logo", methods=["POST"])
 def waiting_generate_logo():
-    data = request.get_json()
-    req_id = generate_request_id()
+    try:
+        request_data = request.get_json()
+        request_id = str(uuid.uuid4())
+        results[request_id] = None  # Placeholder
+        request_queue.put((request_id, request_data))
+        return jsonify({"message": "Your request is in queue", "request_id": request_id})
+    except Exception as e:
+        return jsonify({"error": f"Failed to queue request: {str(e)}"}), 500
 
-    # Add to queue
-    request_queue.put((req_id, data))
-
-    # Wait for result
-    while req_id not in results:
-        pass  # spinlock (you can optimize this later with threading.Condition)
-
-    result = results.pop(req_id)
-
-    if "images" in result:
-        full_urls = [request.host_url.rstrip("/") + url for url in result["images"]]
-        return jsonify({"images": full_urls})
-    else:
-        return jsonify({"error": result.get("error", "Unknown error")}), 500
+@app.route("/get-result/<request_id>", methods=["GET"])
+def get_result(request_id):
+    result = results.get(request_id)
+    if result is None:
+        return jsonify({"status": "pending"})
+    return jsonify({"status": "done", "result": result})
 
 @app.route("/generated_images/<filename>")
 def serve_image(filename):
@@ -124,6 +113,7 @@ def serve_image(filename):
 
 if __name__ == "__main__":
     app.run(debug=True)
+
 
 
 
