@@ -1,13 +1,4 @@
 
-
-
-
-
-
-
-
-
-'''
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
@@ -105,6 +96,7 @@ def waiting_generate_logo():
     # Wait until lock is free, then enter
     with generation_lock:
         print("Processing a queued request...")
+        time.sleep(120)
         return generate_logo()
 
 
@@ -116,7 +108,7 @@ def serve_image(filename):
 if __name__ == "__main__":
     app.run(debug=True)
 
-'''
+
 
 
 
