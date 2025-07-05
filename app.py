@@ -6,6 +6,7 @@ import uuid
 import base64
 import traceback
 import threading
+import time
 
 app = Flask(__name__)
 CORS(app)
@@ -20,12 +21,13 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Proper blocking lock
-generation_lock = threading.Lock()
+# Strict queue lock using condition
+queue_lock = threading.Lock()
+condition = threading.Condition(queue_lock)
+processing = False  # Tracks if someone is inside
 
 def generate_images(prompt, num_images=4):
     image_urls = []
-
     for _ in range(num_images):
         try:
             payload = {
@@ -57,59 +59,48 @@ def generate_images(prompt, num_images=4):
 
     return image_urls
 
-
 def process_logo_request(data):
-    try:
-        business_name = data.get("businessname")
-        slogan = data.get("slogan", "")
-        industry = data.get("industry")
+    business_name = data.get("businessname")
+    slogan = data.get("slogan", "")
+    industry = data.get("industry")
 
-        if not business_name or not industry:
-            return {"error": "Business name and Industry are required."}, 400
+    if not business_name or not industry:
+        return {"error": "Business name and Industry are required."}, 400
 
-        prompt = (
-            f"I need a colorful traditional logo for my {industry} brand named {business_name}. "
-            f"Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. "
-            f"Play with the brand name and the icon. White background. In {industry} industry logo style. "
-            f"Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. "
-            f"Remember on a white background."
-        )
+    prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
 
-        if slogan.strip():
-            prompt += f" My business slogan is {slogan}"
+    if slogan.strip():
+        prompt += f" My business slogan is {slogan}"
 
-        image_urls = generate_images(prompt)
+    image_urls = generate_images(prompt)
+    if not image_urls:
+        return {"error": "Failed to generate images."}, 500
 
-        if not image_urls:
-            return {"error": "Failed to generate images."}, 500
-
-        return {"images": image_urls}, 200
-
-    except Exception as e:
-        return {"error": f"Server error: {str(e)}"}, 500
+    full_urls = [request.host_url.rstrip("/") + url for url in image_urls]
+    return {"images": full_urls}, 200
 
 
 @app.route("/waiting-generate-logo", methods=["POST"])
-def waiting_generate_logo():
+def strict_waiting_generate_logo():
+    global processing
     data = request.get_json()
 
-    acquired = generation_lock.acquire(timeout=300)  # Wait up to 5 minutes
-    if not acquired:
-        return jsonify({"error": "Server is too busy. Please try again later."}), 429
+    with condition:
+        while processing:
+            print("🕓 Request is waiting in queue...")
+            condition.wait()
+
+        print("🚀 Processing new request...")
+        processing = True
 
     try:
-        print("Lock acquired, generating...")
         result, status = process_logo_request(data)
-        # Attach host to image URLs
-        if status == 200:
-            result["images"] = [
-                request.host_url.rstrip("/") + url for url in result["images"]
-            ]
         return jsonify(result), status
-
     finally:
-        print("Releasing lock...")
-        generation_lock.release()
+        with condition:
+            processing = False
+            condition.notify_all()
+            print("✅ Done. Next request in queue may proceed.")
 
 
 @app.route("/generated_images/<filename>")
@@ -118,8 +109,8 @@ def serve_image(filename):
 
 
 if __name__ == "__main__":
-    # Disable threaded mode to avoid race conditions if you want extra safety
-    app.run(debug=True, threaded=True)
+    app.run(debug=True)
+
 
 
 
