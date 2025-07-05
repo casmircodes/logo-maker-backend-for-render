@@ -18,15 +18,17 @@ if not GOOGLE_API_KEY:
 
 MODEL_NAME = "gemini-2.0-flash-exp-image-generation"
 API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Queue to hold requests
+# Queue for requests
 request_queue = queue.Queue()
-results = {}  # request_id -> result
+response_map = {}
 
 def generate_images(prompt, num_images=4):
     image_urls = []
+
     for _ in range(num_images):
         try:
             payload = {
@@ -55,65 +57,67 @@ def generate_images(prompt, num_images=4):
         except Exception as e:
             print(f"Image generation error: {e}\n{traceback.format_exc()}")
             continue
+
     return image_urls
 
-# Worker thread to process one request at a time
+
 def worker():
     while True:
-        request_id, request_data = request_queue.get()
+        job_id, data = request_queue.get()
         try:
-            business_name = request_data.get("businessname")
-            slogan = request_data.get("slogan", "")
-            industry = request_data.get("industry")
+            business_name = data.get("businessname")
+            slogan = data.get("slogan", "")
+            industry = data.get("industry")
 
             if not business_name or not industry:
-                results[request_id] = {"error": "Business name and Industry are required."}
+                response_map[job_id] = jsonify({"error": "Business name and Industry are required."}), 400
                 continue
 
             prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
+
             if slogan.strip():
                 prompt += f" My business slogan is {slogan}"
 
             image_urls = generate_images(prompt)
 
             if not image_urls:
-                results[request_id] = {"error": "Failed to generate images."}
-                continue
+                response_map[job_id] = jsonify({"error": "Failed to generate images."}), 500
+            else:
+                full_urls = [f"{data.get('host')}/generated_images/{url.split('/')[-1]}" for url in image_urls]
+                response_map[job_id] = jsonify({"images": full_urls}), 200
 
-            results[request_id] = {
-                "images": [f"{request.host_url.rstrip('/')}{url}" for url in image_urls]
-            }
         except Exception as e:
-            results[request_id] = {"error": f"Server error: {str(e)}"}
+            response_map[job_id] = jsonify({"error": f"Server error: {str(e)}"}), 500
 
-# Start background worker thread
-threading.Thread(target=worker, daemon=True).start()
+        request_queue.task_done()
+
 
 @app.route("/waiting-generate-logo", methods=["POST"])
 def waiting_generate_logo():
-    try:
-        request_data = request.get_json()
-        request_id = str(uuid.uuid4())
-        results[request_id] = None  # Placeholder
-        request_queue.put((request_id, request_data))
-        return jsonify({"message": "Your request is in queue", "request_id": request_id})
-    except Exception as e:
-        return jsonify({"error": f"Failed to queue request: {str(e)}"}), 500
+    data = request.get_json()
+    data["host"] = request.host_url.rstrip("/")
 
-@app.route("/get-result/<request_id>", methods=["GET"])
-def get_result(request_id):
-    result = results.get(request_id)
-    if result is None:
-        return jsonify({"status": "pending"})
-    return jsonify({"status": "done", "result": result})
+    job_id = str(uuid.uuid4())
+    request_queue.put((job_id, data))
+
+    # Wait for your job to complete
+    while job_id not in response_map:
+        time.sleep(0.2)
+
+    response, status = response_map.pop(job_id)
+    return response, status
+
 
 @app.route("/generated_images/<filename>")
 def serve_image(filename):
     return send_from_directory(OUTPUT_FOLDER, filename)
 
-if __name__ == "__main__":
-    app.run(debug=True)
 
+# Start the background worker thread
+threading.Thread(target=worker, daemon=True).start()
+
+if __name__ == "__main__":
+    app.run(debug=True, threaded=True)
 
 
 
