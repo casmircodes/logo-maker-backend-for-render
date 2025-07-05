@@ -5,6 +5,142 @@ import requests
 import uuid
 import base64
 import traceback
+import queue
+import threading
+
+app = Flask(__name__)
+CORS(app)
+
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
+if not GOOGLE_API_KEY:
+    raise ValueError("GOOGLE_API_KEY environment variable not set.")
+
+MODEL_NAME = "gemini-2.0-flash-exp-image-generation"
+API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_NAME}:generateContent"
+
+OUTPUT_FOLDER = "generated_images"
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+
+# Queue for incoming requests
+request_queue = queue.Queue()
+results = {}
+
+# Lock to generate a unique request ID safely
+id_lock = threading.Lock()
+
+# Generate a safe unique ID
+def generate_request_id():
+    with id_lock:
+        return uuid.uuid4().hex
+
+def generate_images(prompt, num_images=4):
+    image_urls = []
+
+    for _ in range(num_images):
+        try:
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseModalities": ["Text", "Image"]
+                }
+            }
+
+            response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY})
+            response.raise_for_status()
+            data = response.json()
+
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            for part in parts:
+                if "inlineData" in part:
+                    image_data = part["inlineData"]["data"]
+                    filename = f"image_{uuid.uuid4().hex}.png"
+                    filepath = os.path.join(OUTPUT_FOLDER, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(base64.b64decode(image_data))
+
+                    image_url = f"/generated_images/{filename}"
+                    image_urls.append(image_url)
+                    break
+        except Exception as e:
+            print(f"Image generation error: {e}\n{traceback.format_exc()}")
+            continue
+
+    return image_urls
+
+def process_queue():
+    while True:
+        req_id, data = request_queue.get()
+        try:
+            business_name = data.get("businessname")
+            slogan = data.get("slogan", "")
+            industry = data.get("industry")
+
+            if not business_name or not industry:
+                results[req_id] = {"error": "Business name and Industry are required."}
+                continue
+
+            prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
+
+            if slogan.strip():
+                prompt += f" My business slogan is {slogan}"
+
+            image_urls = generate_images(prompt)
+
+            if not image_urls:
+                results[req_id] = {"error": "Failed to generate images."}
+            else:
+                results[req_id] = {"images": image_urls}
+        except Exception as e:
+            results[req_id] = {"error": f"Server error: {str(e)}"}
+        finally:
+            request_queue.task_done()
+
+# Start the background worker
+threading.Thread(target=process_queue, daemon=True).start()
+
+@app.route("/waiting-generate-logo", methods=["POST"])
+def waiting_generate_logo():
+    data = request.get_json()
+    req_id = generate_request_id()
+
+    # Add to queue
+    request_queue.put((req_id, data))
+
+    # Wait for result
+    while req_id not in results:
+        pass  # spinlock (you can optimize this later with threading.Condition)
+
+    result = results.pop(req_id)
+
+    if "images" in result:
+        full_urls = [request.host_url.rstrip("/") + url for url in result["images"]]
+        return jsonify({"images": full_urls})
+    else:
+        return jsonify({"error": result.get("error", "Unknown error")}), 500
+
+@app.route("/generated_images/<filename>")
+def serve_image(filename):
+    return send_from_directory(OUTPUT_FOLDER, filename)
+
+if __name__ == "__main__":
+    app.run(debug=True)
+
+
+
+
+
+
+
+
+
+'''
+from flask import Flask, request, jsonify, send_from_directory
+from flask_cors import CORS
+import os
+import requests
+import uuid
+import base64
+import traceback
 import threading
 import time
 
@@ -106,7 +242,7 @@ def serve_image(filename):
 if __name__ == "__main__":
     app.run(debug=True)
 
-
+'''
 
 
 
