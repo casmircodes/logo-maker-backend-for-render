@@ -7,7 +7,7 @@
 
 
 
-
+'''
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
@@ -117,7 +117,7 @@ def serve_image(filename):
 if __name__ == "__main__":
     app.run(debug=True)
 
-
+'''
 
 
 
