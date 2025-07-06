@@ -105,7 +105,7 @@ def waiting_generate_logo():
     # Wait until lock is free, then enter
     with generation_lock:
         print("Processing a queued request...")
-        time.sleep(60)
+        #time.sleep(60)
         return generate_logo()
 
 
