@@ -9,7 +9,7 @@ import traceback
 import threading
 
 app = Flask(__name__)
-CORS(app)
+CORS(app)  # Allow requests from frontend (Netlify)
 
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
@@ -21,8 +21,10 @@ API_ENDPOINT = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL_
 OUTPUT_FOLDER = "generated_images"
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Lock to control logo generation access
+# Lock and status flag
 generation_lock = threading.Lock()
+is_generating = False  # Global flag to indicate whether generation is ongoing
+is_generating_lock = threading.Lock()  # To prevent race condition on flag
 
 
 def generate_images(prompt, num_images=4):
@@ -60,8 +62,15 @@ def generate_images(prompt, num_images=4):
     return image_urls
 
 
+def set_generating(status: bool):
+    global is_generating
+    with is_generating_lock:
+        is_generating = status
+
+
 @app.route("/generate-logo", methods=["POST"])
 def generate_logo():
+    """Direct endpoint (used internally)"""
     try:
         data = request.get_json()
         business_name = data.get("businessname")
@@ -71,8 +80,8 @@ def generate_logo():
         if not business_name or not industry:
             return jsonify({"error": "Business name and Industry are required."}), 400
 
+        # Build prompt
         prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background."
-
         if slogan.strip():
             prompt += f" My business slogan is {slogan}"
 
@@ -90,19 +99,33 @@ def generate_logo():
 
 @app.route("/waiting-generate-logo", methods=["POST"])
 def waiting_generate_logo():
-    if generation_lock.locked():
-        return jsonify({"status": "busy", "message": "Another request is currently being processed. Please wait."}), 429
+    """Queue-controlled safe endpoint"""
+    global is_generating
+    acquired = generation_lock.acquire(timeout=60)  # wait max 60 seconds
+    if not acquired:
+        return jsonify({"error": "Server is busy. Please try again later."}), 503
 
-    with generation_lock:
-        print("Processing a queued request...")
+    try:
+        set_generating(True)
         return generate_logo()
+    finally:
+        set_generating(False)
+        generation_lock.release()
 
 
-@app.route("/generate-status", methods=["GET"])
-def generate_status():
-    """Check if the logo generator is currently busy."""
-    status = "busy" if generation_lock.locked() else "free"
-    return jsonify({"status": status})
+@app.route("/status", methods=["GET"])
+def status():
+    """Check if both endpoints are FREE"""
+    with is_generating_lock:
+        busy = is_generating
+
+    lock_held = generation_lock.locked()
+    is_busy = busy or lock_held
+
+    return jsonify({
+        "busy": is_busy,
+        "message": "Busy" if is_busy else "Free"
+    })
 
 
 @app.route("/generated_images/<filename>")
