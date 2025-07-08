@@ -80,7 +80,7 @@ def generate_logo():
             return jsonify({"error": "Business name and Industry are required."}), 400
 
         # Build prompt
-        prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background. At the bottom right corner of the image, add the text 'brandice.xyz'"
+        prompt = f"I need a colorful traditional logo for my {industry} brand named {business_name}. Use matured and professional colors. Also make sure it is tempting and attractive to the eyes. Play with the brand name and the icon. White background. In {industry} industry logo style. Leverage 60, 30, 10 color principle. Make sure the concept of the logo icon is clear and meaningful. Remember on a white background. At the bottom right corner of the image, add the 2px size text 'brandice.xyz'"
         if slogan.strip():
             prompt += f" My business slogan is {slogan}"
 
