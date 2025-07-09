@@ -7,6 +7,7 @@ import uuid
 import base64
 import traceback
 import threading
+import time 
 
 app = Flask(__name__)
 CORS(app)  # Allow requests from frontend (Netlify)
@@ -32,6 +33,7 @@ def generate_images(prompt, num_images=4):
 
     for _ in range(num_images):
         try:
+            time.sleep(10)
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
