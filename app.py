@@ -34,7 +34,7 @@ def generate_images(prompt, num_images=4):
 
     for _ in range(num_images):
         try:
-            time.sleep(10)  # Delay 10 seconds before each request
+            time.sleep(2)  # Delay 10 seconds before each request
 
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
