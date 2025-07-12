@@ -52,7 +52,25 @@ def generate_images(prompt, num_images=4):
                 }
             }
 
-            response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY})
+            global ind
+            global GOOGLE_API_KEY
+            
+            # Add the API key to the request URL.
+            params = {"key": GOOGLE_API_KEY}
+            
+            
+            if ind != (len(keys) - 1):
+                ind = ind + 1
+            else:
+                ind = 0
+
+
+            GOOGLE_API_KEY = keys[ind]
+            
+            #print("Kiki  index is "+str(ind))
+            #print("Kiki key is "+str(GOOGLE_API_KEY))
+
+            response = requests.post(API_ENDPOINT, json=payload, params=params)
             response.raise_for_status()
             data = response.json()
 
