@@ -28,7 +28,50 @@ generation_lock = threading.Lock()
 is_generating = False  # Global flag to indicate whether generation is ongoing
 is_generating_lock = threading.Lock()  # To prevent race condition on flag
 
+def generate_images(prompt, num_images=4):
+    image_urls = []
+    threads = []
 
+    def worker():
+        try:
+            time.sleep(10)
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "responseModalities": ["Text", "Image"]
+                }
+            }
+            response = requests.post(API_ENDPOINT, json=payload, params={"key": GOOGLE_API_KEY})
+            response.raise_for_status()
+            data = response.json()
+
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            for part in parts:
+                if "inlineData" in part:
+                    image_data = part["inlineData"]["data"]
+                    filename = f"image_{uuid.uuid4().hex}.png"
+                    filepath = os.path.join(OUTPUT_FOLDER, filename)
+                    with open(filepath, "wb") as f:
+                        f.write(base64.b64decode(image_data))
+                    image_urls.append(f"/generated_images/{filename}")
+                    break
+        except Exception as e:
+            print(f"Worker error: {e}")
+
+    for _ in range(num_images):
+        t = threading.Thread(target=worker)
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    return image_urls
+
+
+
+
+'''
 def generate_images(prompt, num_images=4):
     image_urls = []
 
@@ -64,7 +107,7 @@ def generate_images(prompt, num_images=4):
             continue
 
     return image_urls
-
+'''
 
 def set_generating(status: bool):
     global is_generating
