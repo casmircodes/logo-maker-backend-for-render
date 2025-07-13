@@ -12,7 +12,7 @@ import time  # Added for delay
 app = Flask(__name__)
 CORS(app)  # Allow requests from frontend (Netlify)
 
-ind = 5
+ind = 0
 
 keys = [os.environ.get("GOOGLE_API_KEY"), os.environ.get("GOOGLE_API_KEY1"), os.environ.get("GOOGLE_API_KEY2"), os.environ.get("GOOGLE_API_KEY3"), os.environ.get("GOOGLE_API_KEY4"), os.environ.get("GOOGLE_API_KEY5")]
 
@@ -52,23 +52,23 @@ def generate_images(prompt, num_images=4):
                 }
             }
 
-            #global ind
-            #global GOOGLE_API_KEY
+            global ind
+            global GOOGLE_API_KEY
             
-            ## Add the API key to the request URL.
+            # Add the API key to the request URL.
             params = {"key": GOOGLE_API_KEY}
             
             
-            #if ind != (len(keys) - 1):
-                #ind = ind + 1
-            #else:
-                #ind = 0
+            if ind != (len(keys) - 1):
+                ind = ind + 1
+            else:
+                ind = 0
 
 
-            #GOOGLE_API_KEY = keys[ind]
+            GOOGLE_API_KEY = keys[ind]
             
-            ##print("Kiki  index is "+str(ind))
-            ##print("Kiki key is "+str(GOOGLE_API_KEY))
+            #print("Kiki  index is "+str(ind))
+            #print("Kiki key is "+str(GOOGLE_API_KEY))
 
             response = requests.post(API_ENDPOINT, json=payload, params=params)
             response.raise_for_status()
