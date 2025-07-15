@@ -14,7 +14,7 @@ CORS(app)  # Allow requests from frontend (Netlify)
 
 ind = 0
 
-keys = [os.environ.get("GOOGLE_API_KEY"), os.environ.get("GOOGLE_API_KEY1"), os.environ.get("GOOGLE_API_KEY2"), os.environ.get("GOOGLE_API_KEY3"), os.environ.get("GOOGLE_API_KEY4"), os.environ.get("GOOGLE_API_KEY5")]
+keys = [os.environ.get("GOOGLE_API_KEY"), os.environ.get("GOOGLE_API_KEY1"), os.environ.get("GOOGLE_API_KEY2"), os.environ.get("GOOGLE_API_KEY3"), os.environ.get("GOOGLE_API_KEY4"), os.environ.get("GOOGLE_API_KEY5"), os.environ.get("GOOGLE_API_KEY6"), os.environ.get("GOOGLE_API_KEY7")]
 
 # Configure the Gemini API key from the environment variable
 GOOGLE_API_KEY = keys[ind]
