@@ -10,7 +10,8 @@ import threading
 import time  # Added for delay
 
 app = Flask(__name__)
-CORS(app)  # Allow requests from frontend (Netlify)
+frontend_url = "https://brandice.xyz"
+CORS(app, origins=[frontend_url])  # Allow requests from frontend (Netlify)
 
 ind = 0
 
