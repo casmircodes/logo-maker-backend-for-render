@@ -15,7 +15,7 @@ CORS(app, origins=[frontend_url])  # Allow requests from frontend (Netlify)
 
 ind = 0
 
-keys = [os.environ.get("GOOGLE_API_KEY"), os.environ.get("GOOGLE_API_KEY1"), os.environ.get("GOOGLE_API_KEY2"), os.environ.get("GOOGLE_API_KEY3"), os.environ.get("GOOGLE_API_KEY4"), os.environ.get("GOOGLE_API_KEY5"), os.environ.get("GOOGLE_API_KEY6"), os.environ.get("GOOGLE_API_KEY7")]
+keys = [os.environ.get("GOOGLE_API_KEY"), os.environ.get("GOOGLE_API_KEY1"), os.environ.get("GOOGLE_API_KEY2"), os.environ.get("GOOGLE_API_KEY3"), os.environ.get("GOOGLE_API_KEY4"), os.environ.get("GOOGLE_API_KEY5"), os.environ.get("GOOGLE_API_KEY6"), os.environ.get("GOOGLE_API_KEY7"), os.environ.get("GOOGLE_API_KEY8"), os.environ.get("GOOGLE_API_KEY9")]
 
 # Configure the Gemini API key from the environment variable
 GOOGLE_API_KEY = keys[ind]
@@ -44,7 +44,7 @@ def generate_images(prompt, num_images=4):
 
     for _ in range(num_images):
         try:
-            time.sleep(3)  # Delay 10 seconds before each request
+            time.sleep(2)  # Delay 10 seconds before each request
 
             payload = {
                 "contents": [{"parts": [{"text": prompt}]}],
